@@ -4,7 +4,7 @@ import usb.core
 import usb.util
 import struct
 import time
-
+from threading import Thread
 
 HELIOS_VID	=0x1209
 HELIOS_PID	=0xE500
@@ -74,18 +74,18 @@ class HeliosPoint():
 	def __init__(self,x,y,c = 0xff0000,i= 255):
 		self.x = x
 		self.y = y
-		self.c = c
+		self.c = 0x010203
 		self.i = i
 
 
 class HeliosDAC():
-	def __init__(self):
+	def __init__(self,debug=0):
 		self.closed = 1
 		self.frameReady = 0
 		self.framebuffer = ""
 		self.nextframebuffer = ""
-		#1209:e500
 		self.dev = usb.core.find(idVendor=HELIOS_VID, idProduct=HELIOS_PID)
+		print(self.dev)
 		self.cfg = self.dev.get_active_configuration()
 		self.intf = self.cfg[(0,1,2)]
 		self.dev.reset()
@@ -100,60 +100,83 @@ class HeliosDAC():
 		if self.dev is None:
 			raise ValueError('Device not found')
 		else:
-#			print(self.dev)
-			pass
+			if self.debug:
+				print(self.dev)
 		
-		print(self.GetName())
-		print(self.getHWVersion())
+		try:
+			transferResult = self.intf[0].read(32,1)
+		except:
+			print("no lingering data")
+
+		if self.debug:
+			print(self.GetName())
+			print(self.getHWVersion())
 		self.setSDKVersion()
-#		self.newFrame()
-		self.closed = 0
-		self.newFrame(3,[HeliosPoint(-5,5),HeliosPoint(5,5),HeliosPoint(5,-5),HeliosPoint(-5,-5)],HELIOS_FLAGS_START_IMMEDIATELY)
-		self.doframe_thread_loop()
+		self.closed = False
+
+#		self.doframe_thread_loop()
+#		worker = Thread(target=self.doframe_thread_loop)
+#		worker.setDaemon(True)
+#		worker.start()
+
 			
-	def doframe_thread_loop(self):
-		while self.closed == 0:
-			while ((not self.frameReady) and (not self.closed)):
-				time.sleep(.100)
+			
+			
+#	def doframe_thread_loop(self):
+#		while self.closed == 0:
+##			while ((not self.frameReady) and (not self.closed)):
+##				time.sleep(.100)
+#
+#			if self.closed:
+#				return;
+#
+#			self.DoFrame();
+#			print("boop")
+#			time.sleep(1)
 
-			if self.closed:
-				return;
-
-			self.DoFrame();
-
-			self.frameReady = false;
+#			self.frameReady = false;
 
 	def getHWVersion(self):
 		self.intf[1].write(struct.pack("<H",HELIOS_GET_FWVERSION))
-#		transferResult = self.intf[1].write()
 		transferResult = self.intf[0].read(32)
 		if transferResult[0] == 0x84:
 			return struct.unpack("<L",transferResult[1:])[0]
 		else:
 			return None
 		
-	def setSDKVersion(self, version = HELIOS_SET_SDK_VERSION):
+	def setSDKVersion(self, version = HELIOS_SDK_VERSION):
 		self.intf[1].write(struct.pack("<H",(version << 8) | HELIOS_SET_SDK_VERSION))
-		transferResult = self.intf[1].read(32)
-		print(transferResult)
 		return
 		
+	def setShutter(self, shutter=False):
+		self.SendControl(struct.pack("<H",(shutter << 8) | HELIOS_CMD_SHUTTER))
+		return
+		
+	def setName(self, name):
+		self.SendControl(struct.pack("<H", HELIOS_CMD_SET_NAME) + name[:30] + b"\x00")
+		return
+
 	def newFrame(self,pps, pntobjlist, flags = HELIOS_FLAGS_DEFAULT):
-		#this is a bug workaround, the mcu won't correctly receive transfers with these sizes
 		if self.closed:
 			return HELIOS_ERROR_DEVICE_CLOSED;
 
-		if self.frameReady:
-			return HELIOS_ERROR_DEVICE_FRAME_READY;
+		if ( len(pntobjlist) > HELIOS_MAX_POINTS):
+			return HELIOS_ERROR_TOO_MANY_POINTS
 
+		if (pps > HELIOS_MAX_RATE):
+			return HELIOS_ERROR_PPS_TOO_HIGH
+
+		if (pps < HELIOS_MIN_RATE):
+			return HELIOS_ERROR_PPS_TOO_LOW
+		
+		#this is a bug workaround, the mcu won't correctly receive transfers with these sizes
 		ppsActual = pps;
 		numOfPointsActual = len(pntobjlist)
 		if (((len(pntobjlist)-45) % 64) == 0):
 			numOfPointsActual-=1
-			#adjust pps to keep the same frame duration even with one less point
 			ppsActual = (pps * numOfPointsActual / len(pntobjlist) + 0.5)
 
-		pntobjlst = pntobjlist[:numOfPointsActual]
+		pntobjlist = pntobjlist[:numOfPointsActual]
 		self.nextframebuffer = b""
 		for pnt in pntobjlist:
 			a = (pnt.x >> 4) & 0xff
@@ -162,27 +185,26 @@ class HeliosDAC():
 			r = (pnt.c & 0xff0000) >> 16
 			g = (pnt.c & 0xff00) >> 8
 			b = (pnt.c & 0xff)
-			print(a,b,c,r,g,b,pnt.i)
 			self.nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,pnt.i)
 			
 		self.nextframebuffer += struct.pack("BBBBB",  (ppsActual & 0xFF),(ppsActual >> 8) ,(len(pntobjlist) & 0xFF),(len(pntobjlist) >> 8),flags)
 		if ((flags & HELIOS_FLAGS_DONT_BLOCK) != 0):
-			self.frameReady = true;
 			return HELIOS_SUCCESS
 		else:
 			return self.DoFrame()
-		
+#
 	def DoFrame(self):
 		if (self.closed):
 			return HELIOS_ERROR_DEVICE_CLOSED;
 
 		self.intf[3].write(self.nextframebuffer)
-		ctrlBuffer5 = self.intf[3].read(32)#[:8 + (len(self.nextframebuffer) >> 5)]
+		return self.getStatus()
 
 	def GetName(self):
-		x = self.SendControl(struct.pack("<H",HELIOS_CMD_GET_NAME))
-		if x[0] == "\x85":
-			return x[1:]
+		self.SendControl(struct.pack("<H",HELIOS_CMD_GET_NAME))
+		x = self.intf[0].read(32)[:16]
+		if x[0] == 0x85:
+			return "".join([chr(t) for t in x[1:]])
 		else:
 			return None
 				
@@ -194,9 +216,7 @@ class HeliosDAC():
 			return HELIOS_ERROR_DEVICE_SIGNAL_TOO_LONG;
 
 		self.intf[1].write(buffer)
-		transferResult = self.intf[0].read(32)[:16]
-		transferResult  = "".join([chr(x) for x in transferResult])
-		return transferResult;
+
 
 	def stop(self):
 		self.SendControl(struct.pack("<H",0x0001), 2)
@@ -204,11 +224,10 @@ class HeliosDAC():
 		return
 	
 	def getStatus(self):
-		ret = self.SendControl(struct.pack("<H",0x0003))
-		if ret[0] == "\x85":
+		self.SendControl(struct.pack("<H",0x0003))
+		ret = self.intf[0].read(32)
+		if ret[0] == 0x85:
 			if ret[1:7] == "Helios":
-				self.intf[1].write(ctrlBuffer4,2)
-				ctrlBuffer5 = self.intf[0].read(32)[:16]
 				ctrlBuffer5  = "".join([chr(x) for x in ctrlBuffer5])
 				return ctrlBuffer5
 		else:
@@ -219,5 +238,7 @@ class HeliosDAC():
 
 a = HeliosDAC()
 
-# find our device
+while(1):
+	a.newFrame(20000,[HeliosPoint(300,300),HeliosPoint(300,305),HeliosPoint(305,305),HeliosPoint(305,300),HeliosPoint(300,300),HeliosPoint(300,305),HeliosPoint(5,5),HeliosPoint(5,0)])
+	a.DoFrame()
 
