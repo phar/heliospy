@@ -4,58 +4,59 @@ import usb.core
 import usb.util
 import struct
 import time
+import queue
 from threading import Thread
 
-HELIOS_VID	=0x1209
-HELIOS_PID	=0xE500
-EP_BULK_OUT	=0x02
-EP_BULK_IN	=0x81
-EP_INT_OUT	=0x06
-EP_INT_IN	=0x83
+HELIOS_VID	= 0x1209
+HELIOS_PID	= 0xE500
+EP_BULK_OUT	= 0x02
+EP_BULK_IN	= 0x81
+EP_INT_OUT	= 0x06
+EP_INT_IN	= 0x83
 
-INTERFACE_INT = 0
+INTERFACE_INT =  0
 INTERFACE_BULK = 1
-INTERFACE_ISO = 2
+INTERFACE_ISO =  2
 
-HELIOS_MAX_POINTS	=0x1000
-HELIOS_MAX_RATE		=0xFFFF
-HELIOS_MIN_RATE		=7
+HELIOS_MAX_POINTS	= 0x1000
+HELIOS_MAX_RATE		= 0xFFFF
+HELIOS_MIN_RATE		= 7
 
-HELIOS_SUCCESS		=1
+HELIOS_SUCCESS		= 1
 
 # Functions return negative values if something went wrong
 # Attempted to perform an action before calling OpenDevices()
 HELIOS_ERROR_NOT_INITIALIZED	=-1
 # Attempted to perform an action with an invalid device number
-HELIOS_ERROR_INVALID_DEVNUM		=-2
+HELIOS_ERROR_INVALID_DEVNUM		= -2
 # WriteFrame() called with null pointer to points
-HELIOS_ERROR_NULL_POINTS		=-3
+HELIOS_ERROR_NULL_POINTS		= -3
 # WriteFrame() called with a frame containing too many points
-HELIOS_ERROR_TOO_MANY_POINTS	=-4
+HELIOS_ERROR_TOO_MANY_POINTS	= -4
 # WriteFrame() called with pps higher than maximum allowed
-HELIOS_ERROR_PPS_TOO_HIGH		=-5
+HELIOS_ERROR_PPS_TOO_HIGH		= -5
 # WriteFrame() called with pps lower than minimum allowed
-HELIOS_ERROR_PPS_TOO_LOW		=-6
+HELIOS_ERROR_PPS_TOO_LOW		= -6
 
 # Errors from the HeliosDacDevice class begin at -1000
 # Attempted to perform an operation on a closed DAC device
-HELIOS_ERROR_DEVICE_CLOSED			=-1000
+HELIOS_ERROR_DEVICE_CLOSED			= -1000
 # Attempted to send a new frame with HELIOS_FLAGS_DONT_BLOCK before previous DoFrame() completed
-HELIOS_ERROR_DEVICE_FRAME_READY		=-1001
+HELIOS_ERROR_DEVICE_FRAME_READY		= -1001
 #/ Operation failed because SendControl() failed (if operation failed because of libusb_interrupt_transfer failure, the error code will be a libusb error instead)
-HELIOS_ERROR_DEVICE_SEND_CONTROL	=-1002
+HELIOS_ERROR_DEVICE_SEND_CONTROL	= -1002
 # Received an unexpected result from a call to SendControl()
-HELIOS_ERROR_DEVICE_RESULT			=-1003
+HELIOS_ERROR_DEVICE_RESULT			= -1003
 # Attempted to call SendControl() with a null buffer pointer
-HELIOS_ERROR_DEVICE_NULL_BUFFER		=-1004
+HELIOS_ERROR_DEVICE_NULL_BUFFER		= -1004
 # Attempted to call SendControl() with a control signal that is too long
-HELIOS_ERROR_DEVICE_SIGNAL_TOO_LONG	=-1005
+HELIOS_ERROR_DEVICE_SIGNAL_TOO_LONG	= -1005
 
-HELIOS_ERROR_LIBUSB_BASE		=-5000
+HELIOS_ERROR_LIBUSB_BASE		= -5000
 	
-HELIOS_FLAGS_DEFAULT			=0
-HELIOS_FLAGS_START_IMMEDIATELY	=(1 << 0)
-HELIOS_FLAGS_SINGLE_MODE		=(1 << 1)
+HELIOS_FLAGS_DEFAULT			= 0
+HELIOS_FLAGS_START_IMMEDIATELY	= (1 << 0)
+HELIOS_FLAGS_SINGLE_MODE		= (1 << 1)
 HELIOS_FLAGS_DONT_BLOCK			= (1 << 2)
 
 
@@ -79,13 +80,14 @@ class HeliosPoint():
 
 
 class HeliosDAC():
-	def __init__(self,debug=0):
+	def __init__(self,queuethread=True, debug=0):
+		self.debug=debug
 		self.closed = 1
 		self.frameReady = 0
 		self.framebuffer = ""
+		self.threadqueue = queue.Queue(maxsize=20)
 		self.nextframebuffer = ""
 		self.dev = usb.core.find(idVendor=HELIOS_VID, idProduct=HELIOS_PID)
-		print(self.dev)
 		self.cfg = self.dev.get_active_configuration()
 		self.intf = self.cfg[(0,1,2)]
 		self.dev.reset()
@@ -106,35 +108,29 @@ class HeliosDAC():
 		try:
 			transferResult = self.intf[0].read(32,1)
 		except:
-			print("no lingering data")
+			if self.debug:
+				print("no lingering data")
 
 		if self.debug:
 			print(self.GetName())
 			print(self.getHWVersion())
 		self.setSDKVersion()
 		self.closed = False
+		
+		if queuethread:
+			self.runQueueThread()
 
-#		self.doframe_thread_loop()
-#		worker = Thread(target=self.doframe_thread_loop)
-#		worker.setDaemon(True)
-#		worker.start()
-
+	def runQueueThread(self):
+		worker = Thread(target=self.doframe_thread_loop)
+		worker.setDaemon(True)
+		worker.start()
 			
-			
-			
-#	def doframe_thread_loop(self):
-#		while self.closed == 0:
-##			while ((not self.frameReady) and (not self.closed)):
-##				time.sleep(.100)
-#
-#			if self.closed:
-#				return;
-#
-#			self.DoFrame();
-#			print("boop")
-#			time.sleep(1)
-
-#			self.frameReady = false;
+	def doframe_thread_loop(self):
+		while self.closed == 0:
+			if self.closed:
+				return;
+			self.nextframebuffer = self.threadqueue.get(block=True)
+			self.DoFrame();
 
 	def getHWVersion(self):
 		self.intf[1].write(struct.pack("<H",HELIOS_GET_FWVERSION))
@@ -186,13 +182,9 @@ class HeliosDAC():
 			g = (pnt.c & 0xff00) >> 8
 			b = (pnt.c & 0xff)
 			self.nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,pnt.i)
-			
 		self.nextframebuffer += struct.pack("BBBBB",  (ppsActual & 0xFF),(ppsActual >> 8) ,(len(pntobjlist) & 0xFF),(len(pntobjlist) >> 8),flags)
-		if ((flags & HELIOS_FLAGS_DONT_BLOCK) != 0):
-			return HELIOS_SUCCESS
-		else:
-			return self.DoFrame()
-#
+		self.threadqueue.put(self.nextframebuffer)
+
 	def DoFrame(self):
 		if (self.closed):
 			return HELIOS_ERROR_DEVICE_CLOSED;
@@ -211,34 +203,32 @@ class HeliosDAC():
 	def SendControl(self, buffer):
 		if (buffer == None):
 			return HELIOS_ERROR_DEVICE_NULL_BUFFER;
-
 		if (len(buffer) > 32):
 			return HELIOS_ERROR_DEVICE_SIGNAL_TOO_LONG;
-
 		self.intf[1].write(buffer)
-
 
 	def stop(self):
 		self.SendControl(struct.pack("<H",0x0001), 2)
-		time.sleep(100)
+		time.sleep(.1)
 		return
 	
 	def getStatus(self):
 		self.SendControl(struct.pack("<H",0x0003))
 		ret = self.intf[0].read(32)
-		if ret[0] == 0x85:
-			if ret[1:7] == "Helios":
-				ctrlBuffer5  = "".join([chr(x) for x in ctrlBuffer5])
-				return ctrlBuffer5
-		else:
-			return None
+		if self.debug:
+			print(ret)
+		return ret
 
 
-
-
-a = HeliosDAC()
-
-while(1):
-	a.newFrame(20000,[HeliosPoint(300,300),HeliosPoint(300,305),HeliosPoint(305,305),HeliosPoint(305,300),HeliosPoint(300,300),HeliosPoint(300,305),HeliosPoint(5,5),HeliosPoint(5,0)])
-	a.DoFrame()
+if __name__ == "__main__":
+	a = HeliosDAC()
+	while(1):
+		a.newFrame(20000,[HeliosPoint(300,300),
+						HeliosPoint(300,305),
+						HeliosPoint(305,305),
+						HeliosPoint(305,300),
+						HeliosPoint(300,300),
+						HeliosPoint(300,305),
+						HeliosPoint(5,5),
+						HeliosPoint(5,0)])
 
