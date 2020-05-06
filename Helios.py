@@ -5,6 +5,7 @@ import usb.util
 import struct
 import time
 import queue
+from hershey import *
 from threading import Thread
 
 HELIOS_VID	= 0x1209
@@ -72,12 +73,15 @@ HELIOS_CMD_ERASE_FIRMWARE		=0x00de
 HELIOS_SDK_VERSION	=	6
 
 class HeliosPoint():
-	def __init__(self,x,y,c = 0xff0000,i= 255):
+	def __init__(self,x,y,c = 0xff0000,i= 255,blank=False):
 		self.x = x
 		self.y = y
 		self.c = 0x010203
 		self.i = i
-
+		self.blank = blank
+		
+	def __str__(self):
+		return "HeleiosPoint(%d, %d,0x%0x,%d,%d)" % (self.x, self.y, self.c,self.i, self.blank)
 
 class HeliosDAC():
 	def __init__(self,queuethread=True, debug=0):
@@ -91,6 +95,261 @@ class HeliosDAC():
 		self.cfg = self.dev.get_active_configuration()
 		self.intf = self.cfg[(0,1,2)]
 		self.dev.reset()
+		self.palette =    [(   0,   0,   0 ),	# Black/blanked (fixed)
+		 ( 255, 255, 255 ),	# White (fixed)
+		 ( 255,   0,   0 ),  # Red (fixed)
+		 ( 255, 255,   0 ),  # Yellow (fixed)
+		 (   0, 255,   0 ),  # Green (fixed)
+		 (   0, 255, 255 ),  # Cyan (fixed)
+		 (   0,   0, 255 ),  # Blue (fixed)
+		 ( 255,   0, 255 ),  # Magenta (fixed)
+		 ( 255, 128, 128 ),  # Light red
+		 ( 255, 140, 128 ),
+		 ( 255, 151, 128 ),
+		 ( 255, 163, 128 ),
+		 ( 255, 174, 128 ),
+		 ( 255, 186, 128 ),
+		 ( 255, 197, 128 ),
+		 ( 255, 209, 128 ),
+		 ( 255, 220, 128 ),
+		 ( 255, 232, 128 ),
+		 ( 255, 243, 128 ),
+		 ( 255, 255, 128 ),	# Light yellow
+		 ( 243, 255, 128 ),
+		 ( 232, 255, 128 ),
+		 ( 220, 255, 128 ),
+		 ( 209, 255, 128 ),
+		 ( 197, 255, 128 ),
+		 ( 186, 255, 128 ),
+		 ( 174, 255, 128 ),
+		 ( 163, 255, 128 ),
+		 ( 151, 255, 128 ),
+		 ( 140, 255, 128 ),
+		 ( 128, 255, 128 ),	# Light green
+		 ( 128, 255, 140 ),
+		 ( 128, 255, 151 ),
+		 ( 128, 255, 163 ),
+		 ( 128, 255, 174 ),
+		 ( 128, 255, 186 ),
+		 ( 128, 255, 197 ),
+		 ( 128, 255, 209 ),
+		 ( 128, 255, 220 ),
+		 ( 128, 255, 232 ),
+		 ( 128, 255, 243 ),
+		 ( 128, 255, 255 ),	# Light cyan
+		 ( 128, 243, 255 ),
+		 ( 128, 232, 255 ),
+		 ( 128, 220, 255 ),
+		 ( 128, 209, 255 ),
+		 ( 128, 197, 255 ),
+		 ( 128, 186, 255 ),
+		 ( 128, 174, 255 ),
+		 ( 128, 163, 255 ),
+		 ( 128, 151, 255 ),
+		 ( 128, 140, 255 ),
+		 ( 128, 128, 255 ),	# Light blue
+		 ( 140, 128, 255 ),
+		 ( 151, 128, 255 ),
+		 ( 163, 128, 255 ),
+		 ( 174, 128, 255 ),
+		 ( 186, 128, 255 ),
+		 ( 197, 128, 255 ),
+		 ( 209, 128, 255 ),
+		 ( 220, 128, 255 ),
+		 ( 232, 128, 255 ),
+		 ( 243, 128, 255 ),
+		 ( 255, 128, 255 ), # Light magenta
+		 ( 255, 128, 243 ),
+		 ( 255, 128, 232 ),
+		 ( 255, 128, 220 ),
+		 ( 255, 128, 209 ),
+		 ( 255, 128, 197 ),
+		 ( 255, 128, 186 ),
+		 ( 255, 128, 174 ),
+		 ( 255, 128, 163 ),
+		 ( 255, 128, 151 ),
+		 ( 255, 128, 140 ),
+		 ( 255,   0,   0 ),	# Red (cycleable)
+		 ( 255,  23,   0 ),
+		 ( 255,  46,   0 ),
+		 ( 255,  70,   0 ),
+		 ( 255,  93,   0 ),
+		 ( 255, 116,   0 ),
+		 ( 255, 139,   0 ),
+		 ( 255, 162,   0 ),
+		 ( 255, 185,   0 ),
+		 ( 255, 209,   0 ),
+		 ( 255, 232,   0 ),
+		 ( 255, 255,   0 ),	#Yellow (cycleable)
+		 ( 232, 255,   0 ),
+		 ( 209, 255,   0 ),
+		 ( 185, 255,   0 ),
+		 ( 162, 255,   0 ),
+		 ( 139, 255,   0 ),
+		 ( 116, 255,   0 ),
+		 (  93, 255,   0 ),
+		 (  70, 255,   0 ),
+		 (  46, 255,   0 ),
+		 (  23, 255,   0 ),
+		 (   0, 255,   0 ),	# Green (cycleable)
+		 (   0, 255,  23 ),
+		 (   0, 255,  46 ),
+		 (   0, 255,  70 ),
+		 (   0, 255,  93 ),
+		 (   0, 255, 116 ),
+		 (   0, 255, 139 ),
+		 (   0, 255, 162 ),
+		 (   0, 255, 185 ),
+		 (   0, 255, 209 ),
+		 (   0, 255, 232 ),
+		 (   0, 255, 255 ),	# Cyan (cycleable)
+		 (   0, 232, 255 ),
+		 (   0, 209, 255 ),
+		 (   0, 185, 255 ),
+		 (   0, 162, 255 ),
+		 (   0, 139, 255 ),
+		 (   0, 116, 255 ),
+		 (   0,  93, 255 ),
+		 (   0,  70, 255 ),
+		 (   0,  46, 255 ),
+		 (   0,  23, 255 ),
+		 (   0,   0, 255 ),	# Blue (cycleable)
+		 (  23,   0, 255 ),
+		 (  46,   0, 255 ),
+		 (  70,   0, 255 ),
+		 (  93,   0, 255 ),
+		 ( 116,   0, 255 ),
+		 ( 139,   0, 255 ),
+		 ( 162,   0, 255 ),
+		 ( 185,   0, 255 ),
+		 ( 209,   0, 255 ),
+		 ( 232,   0, 255 ),
+		 ( 255,   0, 255 ),	# Magenta (cycleable)
+		 ( 255,   0, 232 ),
+		 ( 255,   0, 209 ),
+		 ( 255,   0, 185 ),
+		 ( 255,   0, 162 ),
+		 ( 255,   0, 139 ),
+		 ( 255,   0, 116 ),
+		 ( 255,   0,  93 ),
+		 ( 255,   0,  70 ),
+		 ( 255,   0,  46 ),
+		 ( 255,   0,  23 ),
+		 ( 128,   0,   0 ),	# Dark red
+		 ( 128,  12,   0 ),
+		 ( 128,  23,   0 ),
+		 ( 128,  35,   0 ),
+		 ( 128,  47,   0 ),
+		 ( 128,  58,   0 ),
+		 ( 128,  70,   0 ),
+		 ( 128,  81,   0 ),
+		 ( 128,  93,   0 ),
+		 ( 128, 105,   0 ),
+		 ( 128, 116,   0 ),
+		 ( 128, 128,   0 ),	# Dark yellow
+		 ( 116, 128,   0 ),
+		 ( 105, 128,   0 ),
+		 (  93, 128,   0 ),
+		 (  81, 128,   0 ),
+		 (  70, 128,   0 ),
+		 (  58, 128,   0 ),
+		 (  47, 128,   0 ),
+		 (  35, 128,   0 ),
+		 (  23, 128,   0 ),
+		 (  12, 128,   0 ),
+		 (   0, 128,   0 ),	# Dark green
+		 (   0, 128,  12 ),
+		 (   0, 128,  23 ),
+		 (   0, 128,  35 ),
+		 (   0, 128,  47 ),
+		 (   0, 128,  58 ),
+		 (   0, 128,  70 ),
+		 (   0, 128,  81 ),
+		 (   0, 128,  93 ),
+		 (   0, 128, 105 ),
+		 (   0, 128, 116 ),
+		 (   0, 128, 128 ),	# Dark cyan
+		 (   0, 116, 128 ),
+		 (   0, 105, 128 ),
+		 (   0,  93, 128 ),
+		 (   0,  81, 128 ),
+		 (   0,  70, 128 ),
+		 (   0,  58, 128 ),
+		 (   0,  47, 128 ),
+		 (   0,  35, 128 ),
+		 (   0,  23, 128 ),
+		 (   0,  12, 128 ),
+		 (   0,   0, 128 ),	# Dark blue
+		 (  12,   0, 128 ),
+		 (  23,   0, 128 ),
+		 (  35,   0, 128 ),
+		 (  47,   0, 128 ),
+		 (  58,   0, 128 ),
+		 (  70,   0, 128 ),
+		 (  81,   0, 128 ),
+		 (  93,   0, 128 ),
+		 ( 105,   0, 128 ),
+		 ( 116,   0, 128 ),
+		 ( 128,   0, 128 ),	# Dark magenta
+		 ( 128,   0, 116 ),
+		 ( 128,   0, 105 ),
+		 ( 128,   0,  93 ),
+		 ( 128,   0,  81 ),
+		 ( 128,   0,  70 ),
+		 ( 128,   0,  58 ),
+		 ( 128,   0,  47 ),
+		 ( 128,   0,  35 ),
+		 ( 128,   0,  23 ),
+		 ( 128,   0,  12 ),
+		 ( 255, 192, 192 ),	# Very light red
+		 ( 255,  64,  64 ),	# Light-medium red
+		 ( 192,   0,   0 ),	# Medium-dark red
+		 (  64,   0,   0 ),	# Very dark red
+		 ( 255, 255, 192 ),	# Very light yellow
+		 ( 255, 255,  64 ),	# Light-medium yellow
+		 ( 192, 192,   0 ),	# Medium-dark yellow
+		 (  64,  64,   0 ),	# Very dark yellow
+		 ( 192, 255, 192 ),	# Very light green
+		 (  64, 255,  64 ),	# Light-medium green
+		 (   0, 192,   0 ),	# Medium-dark green
+		 (   0,  64,   0 ),	# Very dark green
+		 ( 192, 255, 255 ),	# Very light cyan
+		 (  64, 255, 255 ),	# Light-medium cyan
+		 (   0, 192, 192 ),	# Medium-dark cyan
+		 (   0,  64,  64 ),	# Very dark cyan
+		 ( 192, 192, 255 ),	# Very light blue
+		 (  64,  64, 255 ),	# Light-medium blue
+		 (   0,   0, 192 ),	# Medium-dark blue
+		 (   0,   0,  64 ),	# Very dark blue
+		 ( 255, 192, 255 ),	# Very light magenta
+		 ( 255,  64, 255 ),	# Light-medium magenta
+		 ( 192,   0, 192 ),	# Medium-dark magenta
+		 (  64,   0,  64 ),	# Very dark magenta
+		 ( 255,  96,  96 ),	# Medium skin tone
+		 ( 255, 255, 255 ),	# White (cycleable)
+		 ( 245, 245, 245 ),
+		 ( 235, 235, 235 ),
+		 ( 224, 224, 224 ),	# Very light gray (7/8 intensity)
+		 ( 213, 213, 213 ),
+		 ( 203, 203, 203 ),
+		 ( 192, 192, 192 ),	# Light gray (3/4 intensity)
+		 ( 181, 181, 181 ),
+		 ( 171, 171, 171 ),
+		 ( 160, 160, 160 ),	# Medium-light gray (5/8 int.)
+		 ( 149, 149, 149 ),
+		 ( 139, 139, 139 ),
+		 ( 128, 128, 128 ),	# Medium gray (1/2 intensity)
+		 ( 117, 117, 117 ),
+		 ( 107, 107, 107 ),
+		 (  96,  96,  96 ),	# Medium-dark gray (3/8 int.)
+		 (  85,  85,  85 ),
+		 (  75,  75,  75 ),
+		 (  64,  64,  64 ),	# Dark gray (1/4 intensity)
+		 (  53,  53,  53 ),
+		 (  43,  43,  43 ),
+		 (  32,  32,  32 ),	# Very dark gray (1/8 intensity)
+		 (  21,  21,  21 ),
+		 (  11,  11,  11 )]	# Black
 		
 		self.dev.set_interface_altsetting(interface = 0, alternate_setting = 1)
 		
@@ -116,7 +375,6 @@ class HeliosDAC():
 			print(self.getHWVersion())
 		self.setSDKVersion()
 		self.closed = False
-		
 		if queuethread:
 			self.runQueueThread()
 
@@ -178,17 +436,24 @@ class HeliosDAC():
 			a = (pnt.x >> 4) & 0xff
 			b = ((pnt.x & 0x0F) << 4) | (pnt.y >> 8)
 			c = pnt.y & 0xFF
-			r = (pnt.c & 0xff0000) >> 16
-			g = (pnt.c & 0xff00) >> 8
-			b = (pnt.c & 0xff)
-			self.nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,pnt.i)
+			if pnt.blank == False:
+				r = (pnt.c & 0xff0000) >> 16
+				g = (pnt.c & 0xff00) >> 8
+				b = (pnt.c & 0xff)
+				i = pnt.i
+			else:
+				r = 0
+				g = 0
+				b = 0
+				i = 0
+			self.nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,i)
+			
 		self.nextframebuffer += struct.pack("BBBBB",  (ppsActual & 0xFF),(ppsActual >> 8) ,(len(pntobjlist) & 0xFF),(len(pntobjlist) >> 8),flags)
 		self.threadqueue.put(self.nextframebuffer)
 
 	def DoFrame(self):
 		if (self.closed):
 			return HELIOS_ERROR_DEVICE_CLOSED;
-
 		self.intf[3].write(self.nextframebuffer)
 		return self.getStatus()
 
@@ -218,17 +483,79 @@ class HeliosDAC():
 		if self.debug:
 			print(ret)
 		return ret
+		
+	def generateText(self,text,xpos,ypos,cindex=0,scale=1.0):
+		pointstream = []
+		for c in text:
+			for x,y in HERSHEY_FONT[ord(c)-32]:
+				p = (int(x*scale),int(y*scale))
+				pointstream.append(HeliosPoint(int(x*scale),int(y*scale),self.palette[cindex],blank=False))
+			pointstream.append(HeliosPoint(int(x*scale),int(y*scale),self.palette[cindex],blank=True))
+		return pointstream
 
+	def loadILDfile(self,filename, xscale=1.0, yscale=1.0):
+		f = open(filename,"rb")
+		headerstruct = ">4s3xB8s8sHHHBx"
+		(magic, format, fname, cname, rcnt, num, total_frames, projectorid) = struct.unpack(headerstruct,f.read(struct.calcsize(headerstruct)))
+		if magic == b"ILDA":
+			pointlist = []
+			palette = []
+			x = 0
+			y = 0
+			x = 0
+			red = 0
+			green = 0
+			blue = 0
+			blank = 1
+			lastpoint = 0
+			
+			for  i in range(rcnt):
+				if format in [0,1,4,5]:
+					if format == 0:
+						fmt = ">hhhBB"
+						(x,y,z,status,cindex) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+
+					elif format == 1:
+						fmt = ">hhBB"
+						(x,y,status,cindex) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+
+					elif format == 4:
+						(x,y,z,status,red,green,blue) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+
+					elif format == 5:
+						fmt = ">hhhBBBB"
+						(x,y,status,red,green,blue) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+				
+					blank = (status & 0x40) > 0
+					lastpoint = (status & 0x80) > 0
+					x = int(x * xscale)
+					y = int(y * yscale)
+					pointlist.append(HeliosPoint(x,y,self.palette[cindex],blank=blank))
+					
+				elif format == 2:
+					fmt = ">BBB"
+					(r,g,b) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+					palette.append((r<<16) | (g<<8) | b)
+
+		if len(palette):
+			self.palette = palette
+		return pointlist
 
 if __name__ == "__main__":
 	a = HeliosDAC()
+
+	cal = a.generateText("this is a test", 0,0,20)
 	while(1):
-		a.newFrame(20000,[HeliosPoint(300,300),
-						HeliosPoint(300,305),
-						HeliosPoint(305,305),
-						HeliosPoint(305,300),
-						HeliosPoint(300,300),
-						HeliosPoint(300,305),
-						HeliosPoint(5,5),
-						HeliosPoint(5,0)])
+		a.newFrame(10000,cal)
+	
+#	cal = a.loadILDfile("ildatest.ild")
+#	while(1):
+#		a.newFrame(10000,cal)
+#
+#	while(1):
+#		a.newFrame(10,[HeliosPoint(0,200),
+#						HeliosPoint(200,200),
+#						HeliosPoint(200,0),
+#						HeliosPoint(0,0),
+#						])
 
