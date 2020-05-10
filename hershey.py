@@ -1,4 +1,5 @@
 HERSHEY_HEIGHT = 28
+HERSHEY_WIDTH = 28
 HERSHEY_FONT = [
 				#Ascii 32
 				[(0,16),(-1, -1)],

@@ -7,6 +7,9 @@ import time
 import queue
 from hershey import *
 from threading import Thread
+import matplotlib.pyplot as plt
+import numpy as np
+
 
 HELIOS_VID	= 0x1209
 HELIOS_PID	= 0xE500
@@ -441,13 +444,14 @@ class HeliosDAC():
 				g = (pnt.c & 0xff00) >> 8
 				b = (pnt.c & 0xff)
 				i = pnt.i
+				self.nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,i)
 			else:
 				r = 0
 				g = 0
 				b = 0
 				i = 0
-			self.nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,i)
-			
+				self.nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,i)
+
 		self.nextframebuffer += struct.pack("BBBBB",  (ppsActual & 0xFF),(ppsActual >> 8) ,(len(pntobjlist) & 0xFF),(len(pntobjlist) >> 8),flags)
 		self.threadqueue.put(self.nextframebuffer)
 
@@ -486,11 +490,22 @@ class HeliosDAC():
 		
 	def generateText(self,text,xpos,ypos,cindex=0,scale=1.0):
 		pointstream = []
+		ctr = 0
 		for c in text:
+			lastx = xpos
+			lasty = ypos
+			blank = True
 			for x,y in HERSHEY_FONT[ord(c)-32]:
-				p = (int(x*scale),int(y*scale))
-				pointstream.append(HeliosPoint(int(x*scale),int(y*scale),self.palette[cindex],blank=False))
-			pointstream.append(HeliosPoint(int(x*scale),int(y*scale),self.palette[cindex],blank=True))
+				if (x == -1) and (y == -1):
+#					pointstream.append(HeliosPoint(lastx,lasty,blank=blank))
+					blank = True
+				else:
+					lastx = int((x + (ctr * HERSHEY_WIDTH)) * scale)
+					lasty = int(y * scale)
+					blank = False
+					pointstream.append(HeliosPoint(lastx,lasty,self.palette[cindex],blank=blank))
+			ctr += 1
+
 		return pointstream
 
 	def loadILDfile(self,filename, xscale=1.0, yscale=1.0):
@@ -540,20 +555,40 @@ class HeliosDAC():
 		if len(palette):
 			self.palette = palette
 		return pointlist
+		
+	def plot(self, pntlist):
+		fig, ax = plt.subplots()  # Create a figure containing a single axes.
+		xlst = []
+		ylst = []
+		for p in pntlist:
+			if p.blank == False:
+				xlst.append(p.x)
+				ylst.append(p.y)
+		ax.plot(xlst,ylst)
+		plt.show()
 
 if __name__ == "__main__":
 	a = HeliosDAC()
 
-	cal = a.generateText("this is a test", 0,0,20)
+	cal = a.generateText("TEST", 1000,1000,scale=5)
+#	print(cal)
+	a.plot(cal)
+
 	while(1):
-		a.newFrame(10000,cal)
-	
+		a.newFrame(2000,cal)
+
 #	cal = a.loadILDfile("ildatest.ild")
+#	a.plot(cal)
+
 #	while(1):
-#		a.newFrame(10000,cal)
-#
+#		a.newFrame(5000,cal)
+
 #	while(1):
-#		a.newFrame(10,[HeliosPoint(0,200),
+##		a.newFrame(1000,[HeliosPoint(16000,16000)])
+#		a.newFrame(100,[HeliosPoint(16000-2500,16000),HeliosPoint(16000,16000),HeliosPoint(16000+2500,16000),HeliosPoint(16000,16000),HeliosPoint(16000,16000+2500),HeliosPoint(16000,16000),HeliosPoint(16000,16000-2500),HeliosPoint(16000,16000)])
+
+#	while(1):
+#		a.newFrame(1000,[HeliosPoint(0,200),
 #						HeliosPoint(200,200),
 #						HeliosPoint(200,0),
 #						HeliosPoint(0,0),
