@@ -94,6 +94,7 @@ class HeliosDAC():
 		self.framebuffer = ""
 		self.threadqueue = queue.Queue(maxsize=20)
 		self.nextframebuffer = ""
+		self.adcbits = 12
 		self.dev = usb.core.find(idVendor=HELIOS_VID, idProduct=HELIOS_PID)
 		self.cfg = self.dev.get_active_configuration()
 		self.intf = self.cfg[(0,1,2)]
@@ -390,7 +391,6 @@ class HeliosDAC():
 		while self.closed == 0:
 			if self.closed:
 				return;
-			self.nextframebuffer = self.threadqueue.get(block=True)
 			self.DoFrame();
 
 	def getHWVersion(self):
@@ -431,10 +431,10 @@ class HeliosDAC():
 		numOfPointsActual = len(pntobjlist)
 		if (((len(pntobjlist)-45) % 64) == 0):
 			numOfPointsActual-=1
-			ppsActual = (pps * numOfPointsActual / len(pntobjlist) + 0.5)
+			ppsActual = int((pps * numOfPointsActual / len(pntobjlist) + 0.5))
 
 		pntobjlist = pntobjlist[:numOfPointsActual]
-		self.nextframebuffer = b""
+		nextframebuffer = b""
 		for pnt in pntobjlist:
 			a = (pnt.x >> 4) & 0xff
 			b = ((pnt.x & 0x0F) << 4) | (pnt.y >> 8)
@@ -444,21 +444,23 @@ class HeliosDAC():
 				g = (pnt.c & 0xff00) >> 8
 				b = (pnt.c & 0xff)
 				i = pnt.i
-				self.nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,i)
 			else:
 				r = 0
 				g = 0
 				b = 0
 				i = 0
-				self.nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,i)
-
-		self.nextframebuffer += struct.pack("BBBBB",  (ppsActual & 0xFF),(ppsActual >> 8) ,(len(pntobjlist) & 0xFF),(len(pntobjlist) >> 8),flags)
-		self.threadqueue.put(self.nextframebuffer)
-
+			nextframebuffer += struct.pack("BBBBBBB", a,b,c,r,g,b,i)
+		nextframebuffer += struct.pack("BBBBB",  (ppsActual & 0xFF),(ppsActual >> 8) ,(len(pntobjlist) & 0xFF),(len(pntobjlist) >> 8),flags)
+		self.threadqueue.put(nextframebuffer)
+		
 	def DoFrame(self):
 		if (self.closed):
 			return HELIOS_ERROR_DEVICE_CLOSED;
+		self.nextframebuffer = self.threadqueue.get(block=True)
 		self.intf[3].write(self.nextframebuffer)
+		t = time.time()
+		while(self.getStatus()[1] == 0): #wait for the laser
+			pass
 		return self.getStatus()
 
 	def GetName(self):
@@ -511,50 +513,57 @@ class HeliosDAC():
 	def loadILDfile(self,filename, xscale=1.0, yscale=1.0):
 		f = open(filename,"rb")
 		headerstruct = ">4s3xB8s8sHHHBx"
-		(magic, format, fname, cname, rcnt, num, total_frames, projectorid) = struct.unpack(headerstruct,f.read(struct.calcsize(headerstruct)))
-		if magic == b"ILDA":
-			pointlist = []
-			palette = []
-			x = 0
-			y = 0
-			x = 0
-			red = 0
-			green = 0
-			blue = 0
-			blank = 1
-			lastpoint = 0
-			
-			for  i in range(rcnt):
-				if format in [0,1,4,5]:
-					if format == 0:
-						fmt = ">hhhBB"
-						(x,y,z,status,cindex) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+		moreframes = True
+		frames = []
+		while moreframes:
+			(magic, format, fname, cname, rcnt, num, total_frames, projectorid) = struct.unpack(headerstruct,f.read(struct.calcsize(headerstruct)))
+			if magic == b"ILDA":
+				pointlist = []
+				palette = []
+				x = y = z = red = green = blue = 0
+				blank = 1
+				lastpoint = 0
+				if rcnt > 0:
+					for  i in range(rcnt):
+						if format in [0,1,4,5]:
+							if format == 0:
+								fmt = ">hhhBB"
+								(x,y,z,status,cindex) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
 
-					elif format == 1:
-						fmt = ">hhBB"
-						(x,y,status,cindex) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+							elif format == 1:
+								fmt = ">hhBB"
+								(x,y,status,cindex) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
 
-					elif format == 4:
-						(x,y,z,status,red,green,blue) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+							elif format == 4:
+								(x,y,z,status,red,green,blue) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
 
-					elif format == 5:
-						fmt = ">hhhBBBB"
-						(x,y,status,red,green,blue) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
-				
-					blank = (status & 0x40) > 0
-					lastpoint = (status & 0x80) > 0
-					x = int(x * xscale)
-					y = int(y * yscale)
-					pointlist.append(HeliosPoint(x,y,self.palette[cindex],blank=blank))
+							elif format == 5:
+								fmt = ">hhhBBBB"
+								(x,y,status,red,green,blue) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+						
+							blank = (status & 0x40) > 0
+							lastpoint = (status & 0x80) > 0
+							lessadcbits = (16 - self.adcbits)
+							x = int((x >> lessadcbits) * xscale)
+							y = int((y >> lessadcbits) * yscale)
+							pointlist.append(HeliosPoint(x,y,self.palette[cindex],blank=blank))
+							
+						elif format == 2:
+							fmt = ">BBB"
+							(r,g,b) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
+							palette.append((r<<16) | (g<<8) | b)
+							
+					if format == 2:
+						frames.append((("palette",fname,cname, num),palette))
+					else:
+						frames.append((("frame",fname,cname,num),pointlist))
 					
-				elif format == 2:
-					fmt = ">BBB"
-					(r,g,b) = struct.unpack(fmt,f.read(struct.calcsize(fmt)))
-					palette.append((r<<16) | (g<<8) | b)
+				else:
+					moreframes = 0
+			else:
+				moreframes = 0
 
-		if len(palette):
-			self.palette = palette
-		return pointlist
+		return frames
 		
 	def plot(self, pntlist):
 		fig, ax = plt.subplots()  # Create a figure containing a single axes.
@@ -566,26 +575,39 @@ class HeliosDAC():
 				ylst.append(p.y)
 		ax.plot(xlst,ylst)
 		plt.show()
+		
+		
+		
 
 if __name__ == "__main__":
 	a = HeliosDAC()
 
-	cal = a.generateText("TEST", 1000,1000,scale=5)
-#	print(cal)
-	a.plot(cal)
+	a.runQueueThread()
 
-	while(1):
-		a.newFrame(2000,cal)
-
-#	cal = a.loadILDfile("ildatest.ild")
+#	cal = a.generateText("hello World", 20,20,scale=10)
+##	print(cal)
 #	a.plot(cal)
-
+#
 #	while(1):
-#		a.newFrame(5000,cal)
+#		a.newFrame(2000,cal)
+#		a.DoFrame()
+
+
+	cal = a.loadILDfile("astroid.ild")
+	while(1):
+		for (t,n1,n2,c),f in cal:
+			print("playing %s,%s, %d" % (n1,n2,c))
+			a.newFrame(5000,f)
+#			a.DoFrame()
+
+#			a.plot(f)
+
 
 #	while(1):
 ##		a.newFrame(1000,[HeliosPoint(16000,16000)])
 #		a.newFrame(100,[HeliosPoint(16000-2500,16000),HeliosPoint(16000,16000),HeliosPoint(16000+2500,16000),HeliosPoint(16000,16000),HeliosPoint(16000,16000+2500),HeliosPoint(16000,16000),HeliosPoint(16000,16000-2500),HeliosPoint(16000,16000)])
+#	a.DoFrame()
+
 
 #	while(1):
 #		a.newFrame(1000,[HeliosPoint(0,200),
@@ -593,4 +615,6 @@ if __name__ == "__main__":
 #						HeliosPoint(200,0),
 #						HeliosPoint(0,0),
 #						])
+#		a.DoFrame()
+
 
