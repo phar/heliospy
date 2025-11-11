@@ -91,9 +91,9 @@ class HeliosDAC():
 		self.debug=debug
 		self.closed = 1
 		self.frameReady = 0
-		self.framebuffer = ""
+		self.framebuffer = b""
 		self.threadqueue = queue.Queue(maxsize=20)
-		self.nextframebuffer = ""
+		self.nextframebuffer = b""
 		self.adcbits = 12
 		self.dev = usb.core.find(idVendor=HELIOS_VID, idProduct=HELIOS_PID)
 		self.cfg = self.dev.get_active_configuration()
@@ -459,9 +459,14 @@ class HeliosDAC():
 		self.nextframebuffer = self.threadqueue.get(block=True)
 		self.intf[3].write(self.nextframebuffer)
 		t = time.time()
-		while(self.getStatus()[1] == 0): #wait for the laser
-			pass
-		return self.getStatus()
+		time.sleep(.1)
+		try:
+			while self.getStatus()[1] == 0:
+				time.sleep(0.1)
+		except usb.core.USBTimeoutError:
+			print("timeout")
+			pass  # ignore broken getStatus
+		return True
 
 	def GetName(self):
 		self.SendControl(struct.pack("<H",HELIOS_CMD_GET_NAME))
@@ -584,11 +589,13 @@ if __name__ == "__main__":
 
 	a.runQueueThread()
 
-#	cal = a.generateText("hello World", 20,20,scale=10)
+#	cal = a.generateText("hello World", 20,20,30,scale=10)
 ##	print(cal)
 #	a.plot(cal)
 #
 #	while(1):
+
+#		a.setShutter(0)
 #		a.newFrame(2000,cal)
 #		a.DoFrame()
 
@@ -597,16 +604,17 @@ if __name__ == "__main__":
 	while(1):
 		for (t,n1,n2,c),f in cal:
 			print("playing %s,%s, %d" % (n1,n2,c))
+			a.setShutter(1)
 			a.newFrame(5000,f)
-#			a.DoFrame()
+			a.DoFrame()
 
 #			a.plot(f)
 
 
 #	while(1):
-##		a.newFrame(1000,[HeliosPoint(16000,16000)])
+#		a.newFrame(1000,[HeliosPoint(16000,16000)])
 #		a.newFrame(100,[HeliosPoint(16000-2500,16000),HeliosPoint(16000,16000),HeliosPoint(16000+2500,16000),HeliosPoint(16000,16000),HeliosPoint(16000,16000+2500),HeliosPoint(16000,16000),HeliosPoint(16000,16000-2500),HeliosPoint(16000,16000)])
-#	a.DoFrame()
+#		a.DoFrame()
 
 
 #	while(1):
